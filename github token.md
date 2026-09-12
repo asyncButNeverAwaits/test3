@@ -1,0 +1,1 @@
+Content - Read and Write only
