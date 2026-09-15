@@ -1,0 +1,99 @@
+name: History Squash
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "37 */3 * * *" # Every 3 hours at xx:37 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  squash:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      - name: Squash and force push
+        run: |
+          set -u
+
+          MAX_RETRIES=10
+          RETRY_DELAY=5
+
+          for ATTEMPT in $(seq 1 $MAX_RETRIES); do
+            echo ""
+            echo "=========================================="
+            echo "Squash attempt $ATTEMPT/$MAX_RETRIES"
+            echo "=========================================="
+
+            # Make sure we have the latest remote main
+            echo "Fetching latest main..."
+            git fetch origin main
+
+            # Reset local main to the latest remote main
+            git checkout -B main origin/main
+
+            echo "Remote main:"
+            git rev-parse origin/main
+
+            echo "Creating squashed commit..."
+
+            # Remove any previous temporary branch
+            git branch -D squashed 2>/dev/null || true
+
+            # Create orphan branch from the latest main state
+            git checkout --orphan squashed
+
+            # Add all current files
+            git add -A
+
+            # Create new root commit
+            git commit -m "Squashed repository history"
+
+            # Rename squashed branch to main
+            git branch -M main
+
+            echo "New squashed commit:"
+            git rev-parse main
+
+            echo ""
+            echo "Force pushing to origin/main..."
+
+            # Capture push error instead of immediately failing
+            if git push origin main --force; then
+              echo ""
+              echo "=========================================="
+              echo "Squash completed successfully."
+              echo "=========================================="
+              exit 0
+            fi
+
+            echo ""
+            echo "WARNING: Force push failed."
+            echo "The remote main probably changed while squashing."
+            echo "Retrying..."
+
+            # Don't retry immediately
+            if [ "$ATTEMPT" -lt "$MAX_RETRIES" ]; then
+              echo "Waiting ${RETRY_DELAY} seconds..."
+              sleep "$RETRY_DELAY"
+            fi
+          done
+
+          echo ""
+          echo "=========================================="
+          echo "ERROR: Failed to squash after $MAX_RETRIES attempts."
+          echo "=========================================="
+
+          exit 1
